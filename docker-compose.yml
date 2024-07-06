@@ -1,0 +1,129 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: microdb
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  mongodb:
+    image: mongo:4.4
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  eureka:
+    image: openjdk:17-jdk-slim
+    container_name: eureka
+    environment:
+      - SPRING_APPLICATION_NAME=eureka
+      - EUREKA_CLIENT_FETCH_REGISTRY=false
+      - EUREKA_CLIENT_REGISTER_WITH_EUREKA=false
+    ports:
+      - "8761:8761"
+    volumes:
+      - ./eureka-service:/app
+    working_dir: /app
+    command: ["java", "-jar", "target/eureka-server.jar"]
+
+  config-server:
+    image: openjdk:17-jdk-slim
+    container_name: config-server
+    environment:
+      - SPRING_APPLICATION_NAME=config-server
+      - SERVER_PORT=8084
+    ports:
+      - "8084:8084"
+    volumes:
+      - ./config-server:/app
+    working_dir: /app
+    command: ["java", "-jar", "target/config-server.jar"]
+
+  user-service:
+    image: openjdk:17-jdk-slim
+    container_name: user-service
+    environment:
+      - SPRING_APPLICATION_NAME=user
+      - SERVER_PORT=8070
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/microdb
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=root
+      - SPRING_DATASOURCE_DRIVER_CLASS_NAME=com.mysql.cj.jdbc.Driver
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+      - SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT=org.hibernate.dialect.MySQL8Dialect
+      - SPRING_CLOUD_CONFIG_URI=http://config-server:8084
+      - SPRING_CLOUD_CONFIG_PROFILE=dev
+      - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka:8761/eureka
+    ports:
+      - "8070:8070"
+    depends_on:
+      - mysql
+      - eureka
+      - config-server
+    volumes:
+      - ./user-service:/app
+    working_dir: /app
+    command: ["java", "-jar", "target/user-service.jar"]
+
+  formation-service:
+    image: openjdk:17-jdk-slim
+    container_name: formation-service
+    environment:
+      - SPRING_APPLICATION_NAME=formation
+      - SERVER_PORT=8081
+      - SPRING_DATA_MONGODB_HOST=mongodb
+      - SPRING_DATA_MONGODB_PORT=27017
+      - SPRING_DATA_MONGODB_DATABASE=microdb
+      - SPRING_CLOUD_CONFIG_URI=http://config-server:8084
+      - SPRING_CLOUD_CONFIG_PROFILE=dev
+      - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka:8761/eureka
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongodb
+      - eureka
+      - config-server
+    volumes:
+      - ./formation-service:/app
+    working_dir: /app
+    command: ["java", "-jar", "target/formation-service.jar"]
+
+  gateway-service:
+    image: openjdk:17-jdk-slim
+    container_name: gateway-service
+    environment:
+      - SPRING_APPLICATION_NAME=API-GATEWAY
+      - SERVER_PORT=9191
+      - SPRING_CLOUD_CONFIG_URI=http://config-server:8084
+      - SPRING_CLOUD_CONFIG_PROFILE=dev
+      - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka:8761/eureka
+      - MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=*
+      - SPRING_CLOUD_GATEWAY_ROUTES[0].ID=user
+      - SPRING_CLOUD_GATEWAY_ROUTES[0].URI=lb://user-service
+      - SPRING_CLOUD_GATEWAY_ROUTES[0].PREDICATES[0]=Path=/user/**
+      - SPRING_CLOUD_GATEWAY_ROUTES[1].ID=formation
+      - SPRING_CLOUD_GATEWAY_ROUTES[1].URI=lb://formation-service
+      - SPRING_CLOUD_GATEWAY_ROUTES[1].PREDICATES[0]=Path=/formation/**
+    ports:
+      - "9191:9191"
+    depends_on:
+      - eureka
+      - user-service
+      - formation-service
+      - config-server
+    volumes:
+      - ./gateway-service:/app
+    working_dir: /app
+    command: ["java", "-jar", "target/gateway-service.jar"]
+
+volumes:
+  mysql-data:
+  mongo-data:
